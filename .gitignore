@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vscode/
+.idea/
+auth.json
+.grok_widget_settings.json
