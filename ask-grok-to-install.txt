@@ -2,11 +2,11 @@ Please install the Grok Usage Widget on this Windows PC.
 
 Public repo: https://github.com/JosephBurgan/grok-usage-widget
 
-This is my machine. Use $env:USERPROFILE (or Path.home()) for every path.
-Do not use C:\Users\Joseph unless that is actually my Windows profile.
+This is my machine. Use $env:USERPROFILE (PowerShell) or Path.home() (Python) for every path.
+Never infer the home folder from $env:USERNAME or whoami — the account name and the profile folder are often different (example: USERNAME=Joseph, profile=C:\Users\josep).
 
 1. Confirm Windows 10/11.
-2. If python is missing or older than 3.10, tell me to install Python from python.org with "Add python.exe to PATH", then stop so I can retry.
+2. If python is missing or older than 3.10, or pythonw / tkinter is missing, tell me to install Python from python.org with "Add python.exe to PATH" (leave Tcl/tk enabled), then stop so I can retry.
 3. If git is missing, tell me to install Git from git-scm.com, then stop so I can retry.
 4. If the grok command is missing, install Grok Build with:
    irm https://x.ai/cli/install.ps1 | iex
@@ -16,6 +16,11 @@ Do not use C:\Users\Joseph unless that is actually my Windows profile.
 6. Clone the repo to %USERPROFILE%\grok-usage-widget if that folder is not already a git checkout of this repo.
 7. Read AGENTS.md in the clone, then from that folder run:
    powershell -ExecutionPolicy Bypass -File setup.ps1
-8. Confirm the widget window appeared. Do not commit, push, or upload credentials.
+8. After that command has fully exited, confirm pythonw.exe is still running grok_widget.py.
+   If it died, relaunch through Explorer (so it outlives the agent Job Object):
+     $lnk = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Grok Usage Widget.lnk"
+     Start-Process explorer.exe -ArgumentList "`"$lnk`""
+   Confirm a visible Tk window. Do not use PowerShell $PID when enumerating windows (it is reserved).
+   Do not commit, push, or upload credentials.
 
 Do not edit source unless setup fails. Do not put secrets in the repo.

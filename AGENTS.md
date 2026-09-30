@@ -13,10 +13,11 @@ Trigger: the user asks to set this up, install it, or "get the widget running."
 Do this, in order. Stop and tell the user what to install if a step is blocked.
 
 1. **OS.** Windows 10 or 11 only. If this is macOS or Linux, stop and say so.
-2. **Python.** `python --version` must be 3.10+. If missing, send them to
-   https://www.python.org/downloads/windows/ and tell them to check
-   **Add python.exe to PATH**. Do not continue until `python` works in a new
-   terminal.
+2. **Python.** `python --version` must be 3.10+. `pythonw` must exist.
+   `python -c "import tkinter"` must succeed. If any of those fail, send them
+   to https://www.python.org/downloads/windows/ and tell them to check
+   **Add python.exe to PATH** (leave Tcl/tk enabled). Do not continue until
+   `python` works in a new terminal.
 3. **Git.** `git --version`. If missing, send them to
    https://git-scm.com/download/win. Do not continue until `git` works.
 4. **Grok CLI.** If `grok` is missing:
@@ -32,17 +33,29 @@ Do this, in order. Stop and tell the user what to install if a step is blocked.
    ```powershell
    git clone https://github.com/JosephBurgan/grok-usage-widget.git "$env:USERPROFILE\grok-usage-widget"
    ```
-   Use `$env:USERPROFILE` (PowerShell) or `Path.home()` (Python). Hard-coding
-   `C:\Users\Joseph` is wrong unless `whoami` / `$env:USERNAME` is actually
-   `Joseph` on **this** machine.
+   Use `$env:USERPROFILE` (PowerShell) or `Path.home()` (Python) **always**.
+   Never infer the home folder from `$env:USERNAME` or `whoami`. The account
+   name and the profile folder are often different (USERNAME can be `Joseph`
+   while the profile is `C:\Users\josep`).
 7. **Setup.** From the clone:
    ```powershell
    powershell -ExecutionPolicy Bypass -File setup.ps1
    ```
-   That installs `requirements.txt`, writes a Start Menu shortcut, and launches
-   `grok_widget.vbs` (pythonw, no console).
-8. **Done.** A floating window should appear (often bottom-right). Tell the
-   user they can enable **Launch on startup** from ≡ in the widget.
+   That checks Python/tkinter, installs `requirements.txt`, writes a Start
+   Menu shortcut, and launches the widget through Explorer so `pythonw` is
+   not a child of this command. Agent CLIs wrap commands in a Job Object and
+   will kill `Start-Process` children when the command exits.
+8. **Done.** After `setup.ps1` has **fully exited**, confirm `pythonw.exe` is
+   still running `grok_widget.py`. If it died, relaunch through Explorer:
+   ```powershell
+   $lnk = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Grok Usage Widget.lnk"
+   Start-Process explorer.exe -ArgumentList "`"$lnk`""
+   ```
+   A floating Tk window should be visible (any monitor, often bottom-right).
+   Do not use PowerShell `$PID` when enumerating windows — it is reserved.
+   If the process dies instantly, read `%TEMP%\grok_widget_error.log`.
+   Tell the user they can enable **Launch on startup** from the gear in the
+   widget. If one copy is already running, leave it.
 
 Do not push, commit, or open a PR as part of install. Do not upload
 `auth.json` or `.grok_widget_settings.json`. Do not install extra MCP servers
@@ -51,11 +64,13 @@ or skills for this. Do not copy files into `%USERPROFILE%` except via
 
 If setup fails, paste the PowerShell error and fix that. Common issues:
 
-- `python` not on PATH → reinstall Python with Add to PATH, new terminal
+- `python` / `pythonw` not on PATH → reinstall Python with Add to PATH, new terminal
+- `tkinter` missing → reinstall Python with Tcl/tk enabled
 - `Not logged in` in the widget → `grok login` on this PC
 - Execution policy → already bypassed by the command above
-- Widget already running → that's fine; setup launches another copy only if
-  the user runs it again
+- Widget vanished right after setup printed Done → Job Object killed it;
+  relaunch via the Explorer shortcut command in step 8
+- Crash at startup → `%TEMP%\grok_widget_error.log`
 
 ## Runtime layout
 
@@ -63,7 +78,7 @@ If setup fails, paste the PowerShell error and fix that. Common issues:
   `grok_widget.py` next to itself.
 - Credentials: `%USERPROFILE%\.grok\auth.json` (Grok Build CLI)
 - Widget prefs: `%USERPROFILE%\.grok_widget_settings.json`
-- Nothing else on disk. No log files.
+- Crash log (only on uncaught exception): `%TEMP%\grok_widget_error.log`
 
 ## Versioning (maintainers)
 
@@ -103,3 +118,4 @@ Never push without the repo owner's explicit approval.
 - Minimal blue. Buttons gray, white text. Green/orange/red only on usage bars.
 - All UI mutations via `_after_safe()` so destroyed-window callbacks no-op.
 - Paths via `Path.home()` / `Path(__file__)`. Never a hardcoded username.
+  Never derive the home folder from `$env:USERNAME`.

@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import tkinter as tk
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1426,4 +1427,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        log = Path(tempfile.gettempdir()) / "grok_widget_error.log"
+        try:
+            log.write_text(
+                f"{datetime.now().isoformat()}\n{traceback.format_exc()}",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        raise
