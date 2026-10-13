@@ -3,10 +3,15 @@
 Reads OAuth tokens from ~/.grok/auth.json (created by the Grok Build CLI),
 polls https://cli-chat-proxy.grok.com/v1/billing?format=credits, and
 auto-refreshes the access token when it's near expiry.
+
+When Grok Bot is signed in on this PC, a Bot row is added from
+DashboardService/GetSandUsageStatus. That meter has its own weekly window.
 """
 
 from __future__ import annotations
 
+import base64
+import ctypes
 import json
 import os
 import subprocess
@@ -16,6 +21,7 @@ import threading
 import time
 import traceback
 import tkinter as tk
+from ctypes import wintypes
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,6 +84,12 @@ DEFAULT_TOKEN_URL = "https://auth.x.ai/oauth2/token"
 BILLING_URL       = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 SETTINGS_URL      = "https://cli-chat-proxy.grok.com/v1/settings"
 CLI_AUTH_HDR      = {"x-xai-token-auth": "xai-grok-cli", "Accept": "application/json"}
+
+# Grok Bot (desktop app) keeps a Cursor session in its user-data folder.
+# The usage RPC is separate from the Grok CLI billing pool.
+BOT_API           = "https://api2.cursor.sh"
+BOT_USAGE_URL     = BOT_API + "/aiserver.v1.DashboardService/GetSandUsageStatus"
+BOT_LABEL         = "Bot"
 
 # Refresh the access token when it's within this many seconds of expiry.
 TOKEN_REFRESH_MARGIN_S = 5 * 60
@@ -199,7 +211,133 @@ def fetch_usage() -> dict:
         pass
     if tier:
         payload["_tier_display"] = tier
+    bot = fetch_grok_bot_usage()
+    if bot:
+        payload["_bot"] = bot
     return payload
+
+
+def _roaming_dir() -> Path:
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata)
+    return HOME / "AppData" / "Roaming"
+
+
+def _bot_user_data() -> Path:
+    return _roaming_dir() / "Grok Bot"
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [
+        ("cbData", wintypes.DWORD),
+        ("pbData", ctypes.POINTER(ctypes.c_char)),
+    ]
+
+
+def _dpapi_decrypt(data: bytes) -> bytes:
+    """Decrypt a Windows DPAPI blob for the current user."""
+    buf = ctypes.create_string_buffer(data)
+    blob_in = _DataBlob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _DataBlob()
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+    ):
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+
+
+def _bot_aes_key() -> bytes:
+    """AES key Chromium/Electron safeStorage uses for this user's Grok Bot data."""
+    local_state = _bot_user_data() / "Local State"
+    raw = json.loads(local_state.read_text(encoding="utf-8"))
+    enc_key = base64.b64decode(raw["os_crypt"]["encrypted_key"])
+    if not enc_key.startswith(b"DPAPI"):
+        raise ValueError("Unexpected Grok Bot encryption key")
+    return _dpapi_decrypt(enc_key[5:])
+
+
+def _decrypt_v10(value: str, key: bytes) -> str:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    raw = base64.b64decode(value)
+    if not raw.startswith(b"v10") or len(raw) < 3 + 12 + 16:
+        raise ValueError("Unexpected Grok Bot secret format")
+    nonce, ct = raw[3:15], raw[15:]
+    return AESGCM(key).decrypt(nonce, ct, None).decode("utf-8")
+
+
+def _open_secret(value: str, key: bytes) -> str:
+    if value.startswith("eyJ") and value.count(".") == 2:
+        return value
+    return _decrypt_v10(value, key)
+
+
+def _load_bot_account() -> tuple[dict, bytes]:
+    """Return the active Grok Bot account dict and its AES key.
+
+    Read-only. Refreshing this session rotates a token Grok Bot also uses,
+    so an expired sign-in just hides the Bot row until the app signs in again.
+    """
+    root = _read_json(_bot_user_data() / "sand-secrets.json")
+    accounts_raw = root.get("cursor-accounts")
+    if isinstance(accounts_raw, str):
+        accounts = json.loads(accounts_raw)
+    elif isinstance(accounts_raw, dict):
+        accounts = accounts_raw
+    else:
+        raise FileNotFoundError("Grok Bot has no saved account")
+    active = accounts.get("active")
+    book = accounts.get("accounts") or {}
+    if not active or not isinstance(book.get(active), dict):
+        raise FileNotFoundError("Grok Bot is not signed in")
+    return book[active], _bot_aes_key()
+
+
+def _bot_access_token() -> str:
+    account, key = _load_bot_account()
+    return _open_secret(str(account.get("cursor-access-token") or ""), key)
+
+
+def fetch_grok_bot_usage() -> dict | None:
+    """Best-effort Grok Bot weekly usage. Missing sign-in returns None."""
+    secrets = _bot_user_data() / "sand-secrets.json"
+    if not secrets.is_file():
+        return None
+    try:
+        token = _bot_access_token()
+        r = requests.post(
+            BOT_USAGE_URL,
+            data=b"{}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Connect-Protocol-Version": "1",
+                "x-cursor-client-type": "sand",
+                "x-cursor-client-version": "sand-desktop",
+                "x-ghost-mode": "true",
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        body = r.json()
+    except Exception:
+        return None
+    pct = body.get("usagePercent")
+    if pct is None:
+        return None
+    try:
+        pct_f = float(pct)
+    except (TypeError, ValueError):
+        return None
+    return {
+        "usagePercent": pct_f,
+        "periodStart": body.get("currentPeriodStart") or "",
+        "nextReset": body.get("nextResetTimestampUtc") or "",
+    }
 
 
 def is_auth_error(exc: BaseException) -> bool:
@@ -506,6 +644,19 @@ def parse_usage(data: dict) -> list[Row]:
             continue
         plabel = PRODUCT_LABELS.get(product, product or "Product")
         rows.append((plabel, float(pct) / 100.0, "", None))
+
+    bot = data.get("_bot") or {}
+    bot_pct = bot.get("usagePercent")
+    if bot_pct is not None:
+        bot_end = str(bot.get("nextReset") or "")
+        bot_start = str(bot.get("periodStart") or "")
+        bot_window = _period_window_s(None, bot_start, bot_end)
+        rows.append((
+            BOT_LABEL,
+            float(bot_pct) / 100.0,
+            _fmt_countdown(bot_end) if bot_end else "",
+            _time_progress(bot_end, bot_window) if bot_end else None,
+        ))
 
     on_cap = _cents_to_dollars(cfg.get("onDemandCap"))
     on_used = _cents_to_dollars(cfg.get("onDemandUsed"))

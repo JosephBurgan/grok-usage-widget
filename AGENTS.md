@@ -77,6 +77,9 @@ If setup fails, paste the PowerShell error and fix that. Common issues:
 - Repo / live code: the git clone (wherever it is). `grok_widget.vbs` locates
   `grok_widget.py` next to itself.
 - Credentials: `%USERPROFILE%\.grok\auth.json` (Grok Build CLI)
+- Grok Bot sign-in (optional Bot row): `%APPDATA%\Grok Bot\sand-secrets.json`
+  plus the `Local State` encryption key next to it. Read it in place.
+  Never copy it, never commit it, never print the tokens.
 - Widget prefs: `%USERPROFILE%\.grok_widget_settings.json`
 - Crash log (only on uncaught exception): `%TEMP%\grok_widget_error.log`
 

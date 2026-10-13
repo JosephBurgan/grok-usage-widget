@@ -13,6 +13,7 @@ few minutes (configurable).
 - Live progress bars colored by usage level (green / orange / red)
 - Countdown to the weekly (or monthly) reset
 - Per-product rows (Chat, Build, Imagine, …) when the API returns them
+- A Bot row when Grok Bot is signed in on this PC (its own weekly window)
 - Click the pin (📌) to toggle always-on-top
 - Click the gear (≡) to hide rows, set refresh interval, and launch-on-startup
 
@@ -106,6 +107,10 @@ git pull
   `Authorization: Bearer <token>` and `x-xai-token-auth: xai-grok-cli`
 - Optionally reads plan name from `/v1/settings` (`subscription_tier_display`)
 - Writes refreshed tokens back to the credentials file
+- If Grok Bot is signed in on this PC, also reads that local sign-in and asks
+  Grok Bot's usage status for a **Bot** row. That meter resets on its own
+  weekly clock, separate from the Chat / Build / Voice rows. No Grok Bot
+  sign-in means the row is left off. Those credentials stay on this PC.
 
 This is a billing/metadata call — it does **not** consume your weekly usage
 pool or prepaid API credits.
